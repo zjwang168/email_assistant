@@ -3,33 +3,37 @@ import os
 import requests
 from dotenv import load_dotenv
 
-# 确保这里也加载一下 .env（多次调用没关系）
-load_dotenv(dotenv_path=".env")
+load_dotenv(".env")
 
-def send_summary_email(to_email: str, original_subject: str, summary: str):
-    """Send summarized reply email via Mailgun"""
+def send_summary_email(to_email, subject, summary, ics_content: str | None = None):
+    MAILGUN_API_KEY = os.getenv("MAILGUN_API_KEY")
+    MAILGUN_DOMAIN = os.getenv("MAILGUN_DOMAIN")
 
-    mailgun_domain = os.getenv("MAILGUN_DOMAIN")
-    mailgun_api_key = os.getenv("MAILGUN_API_KEY")
-
-    if not mailgun_domain or not mailgun_api_key:
-        print("❌ Mailgun credentials missing in mail_sender.py")
-        print("   MAILGUN_DOMAIN:", mailgun_domain)
-        print("   MAILGUN_API_KEY:", mailgun_api_key)
+    if not MAILGUN_API_KEY or not MAILGUN_DOMAIN:
+        print("❌ Mailgun credentials missing")
         return
 
+    print("DEBUG MAILGUN_DOMAIN =", MAILGUN_DOMAIN)
     print(f"📤 Sending summary email to {to_email} via Mailgun...")
 
-    res = requests.post(
-        f"https://api.mailgun.net/v3/{mailgun_domain}/messages",
-        auth=("api", mailgun_api_key),
-        data={
-            "from": f"Assistant <assistant@{mailgun_domain}>",
-            "to": [to_email],
-            "subject": f"Re: {original_subject}",
-            "text": summary,
-        },
+    data = {
+        "from": f"Zijin Assistant <assistant@{MAILGUN_DOMAIN}>",
+        "to": [to_email],
+        "subject": f"Summary: {subject}",
+        "text": f"Here's the summary of your email:\n\n{summary}",
+    }
+
+    files = None
+    if ics_content:
+        files = [
+            ("attachment", ("event.ics", ics_content, "text/calendar"))
+        ]
+
+    response = requests.post(
+        f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
+        auth=("api", MAILGUN_API_KEY),
+        data=data,
+        files=files,
     )
 
-    print("Mailgun response:", res.status_code, res.text[:200])
-    return res
+    print("Mailgun response:", response.status_code, response.text[:200])

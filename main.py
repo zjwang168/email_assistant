@@ -1,47 +1,55 @@
+# main.py
 from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 import os
+from datetime import datetime
+
 from services.mail_sender import send_summary_email
+from services.llm_extractor import summarize_email
+from services.calendar_generator import generate_basic_ics  # ⭐ 新增
 
-# 1️⃣ 加载环境变量
-load_dotenv(dotenv_path=".env")
+load_dotenv(".env")
 
-MAILGUN_API_KEY = os.getenv("MAILGUN_API_KEY")
-MAILGUN_DOMAIN = os.getenv("MAILGUN_DOMAIN")
+print("Mailgun API KEY:", os.getenv("MAILGUN_API_KEY"))
+print("Mailgun DOMAIN:", os.getenv("MAILGUN_DOMAIN"))
 
-print(f"Mailgun API KEY: {MAILGUN_API_KEY}")
-print(f"Mailgun DOMAIN: {MAILGUN_DOMAIN}")
+app = FastAPI()
 
-# 2️⃣ 初始化 FastAPI
-app = FastAPI(title="Email Assistant API", version="0.1")
-
-# 3️⃣ 健康检查路由
 @app.get("/")
 async def root():
     return {"message": "Email assistant is running!"}
 
-# 4️⃣ Webhook 路由
+
 @app.post("/email/webhook")
 async def handle_incoming_email(request: Request):
-    """Receive email data from Mailgun webhook"""
-    try:
-        form_data = await request.form()
-        sender = form_data.get("sender")
-        subject = form_data.get("subject")
-        body = form_data.get("body-plain", "")
+    form_data = await request.form()
 
-        print(f"\n📩 New email received from {sender}")
-        print(f"Subject: {subject}")
-        print(f"Body: {body[:200]}...")  # 打印前200字符，防止太长
+    sender = form_data.get("sender")
+    subject = form_data.get("subject") or "(no subject)"
+    body = form_data.get("body-plain") or ""
 
-        # Step 1️⃣：生成简单摘要（mock）
-        summary = f"Summary of '{subject}': {body[:100]}..."
+    print(f"\n📩 New email received from {sender}")
+    print(f"Subject: {subject}")
+    print(f"Body: {body[:200]}...")
 
-        # Step 2️⃣：发送回信
-        send_summary_email(sender, subject, summary)
+    # 1️⃣ 用 summarizer 生成摘要
+    summary = summarize_email(subject, body)
 
-        return {"status": "ok", "summary": summary}
+    # 2️⃣ 先做一个 demo：如果 subject 里有 "Parent-teacher meeting"
+    #    我们就假装这是一个 2025-11-06 15:00 的会，生成一个 .ics
+    ics_content = None
+    if "Parent-teacher" in subject or "Parent-teacher meeting" in subject:
+        # 👉 这里先写死时间，MVP 测试用
+        start_time = datetime(2025, 11, 6, 15, 0)
+        ics_content = generate_basic_ics(
+            summary="Parent-teacher meeting",
+            description=summary,
+            start_time=start_time,
+            duration_minutes=60,
+            location="Room 210",
+        )
 
-    except Exception as e:
-        print("❌ Error handling webhook:", e)
-        return {"status": "error", "detail": str(e)}
+    # 3️⃣ 把 summary + (可选) ics 发回去
+    send_summary_email(sender, subject, summary, ics_content=ics_content)
+
+    return {"status": "ok", "summary": summary}
