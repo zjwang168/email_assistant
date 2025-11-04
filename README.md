@@ -1,7 +1,6 @@
 # email_assistant
 
-The goal:
-"Forward an email, and your AI assistant handles the rest - no logins, no setup, no bullshit."
+Forward an email, and your AI assistant handles the rest - no logins, no setup, no bullshit.
 
 ⚙️ Features
 
