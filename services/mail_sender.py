@@ -16,11 +16,19 @@ def send_summary_email(to_email, subject, summary, ics_content: str | None = Non
     print("DEBUG MAILGUN_DOMAIN =", MAILGUN_DOMAIN)
     print(f"📤 Sending summary email to {to_email} via Mailgun...")
 
+    body_text = (
+        "💡 Here's what I found in your email:\n\n"
+        f"{summary}\n\n"
+        "—\n"
+        "🧭 Zijin Assistant\n"
+        "Your AI-powered inbox helper")
+
+
     data = {
         "from": f"Zijin Assistant <assistant@{MAILGUN_DOMAIN}>",
         "to": [to_email],
         "subject": f"Summary: {subject}",
-        "text": f"Here's the summary of your email:\n\n{summary}",
+        "text": body_text,
     }
 
     files = None
