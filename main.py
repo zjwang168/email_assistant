@@ -6,7 +6,7 @@ from datetime import datetime
 
 from services.mail_sender import send_summary_email
 from services.llm_extractor import summarize_email
-from services.calendar_generator import generate_basic_ics  # ⭐ 新增
+from services.calendar_generator import detect_event_and_build_ics
 
 load_dotenv(".env")
 
@@ -18,7 +18,6 @@ app = FastAPI()
 @app.get("/")
 async def root():
     return {"message": "Email assistant is running!"}
-
 
 @app.post("/email/webhook")
 async def handle_incoming_email(request: Request):
@@ -32,24 +31,13 @@ async def handle_incoming_email(request: Request):
     print(f"Subject: {subject}")
     print(f"Body: {body[:200]}...")
 
-    # 1️⃣ 用 summarizer 生成摘要
+    # 1) 生成摘要（LLM 或 fallback）
     summary = summarize_email(subject, body)
 
-    # 2️⃣ 先做一个 demo：如果 subject 里有 "Parent-teacher meeting"
-    #    我们就假装这是一个 2025-11-06 15:00 的会，生成一个 .ics
-    ics_content = None
-    if "Parent-teacher" in subject or "Parent-teacher meeting" in subject:
-        # 👉 这里先写死时间，MVP 测试用
-        start_time = datetime(2025, 11, 6, 15, 0)
-        ics_content = generate_basic_ics(
-            summary="Parent-teacher meeting",
-            description=summary,
-            start_time=start_time,
-            duration_minutes=60,
-            location="Room 210",
-        )
+    # 2) 自动检测是否有事件，并生成 .ics 内容（可能是 None）
+    ics_content = detect_event_and_build_ics(subject, body)
 
-    # 3️⃣ 把 summary + (可选) ics 发回去
-    send_summary_email(sender, subject, summary, ics_content=ics_content)
+    # 3) 发送带 summary + 可选 .ics 的邮件
+    send_summary_email(sender, subject, summary, ics_content)
 
     return {"status": "ok", "summary": summary}

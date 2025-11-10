@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv(".env")
 
+
 def send_summary_email(to_email, subject, summary, ics_content: str | None = None):
     MAILGUN_API_KEY = os.getenv("MAILGUN_API_KEY")
     MAILGUN_DOMAIN = os.getenv("MAILGUN_DOMAIN")
@@ -21,8 +22,8 @@ def send_summary_email(to_email, subject, summary, ics_content: str | None = Non
         f"{summary}\n\n"
         "—\n"
         "🧭 Zijin Assistant\n"
-        "Your AI-powered inbox helper")
-
+        "Your AI-powered inbox helper"
+    )
 
     data = {
         "from": f"Zijin Assistant <assistant@{MAILGUN_DOMAIN}>",
