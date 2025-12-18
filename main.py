@@ -1,16 +1,12 @@
-# email_assistant/main.py
+import os
 from fastapi import FastAPI, Request
 from dotenv import load_dotenv
-import tempfile
 
-from email_assistant.services.mail_sender import send_summary_email
-from email_assistant.services.llm_extractor import build_forward_package
-from email_assistant.services.calendar_generator import (
-    build_ics_from_calendar_event,
-    detect_event_and_build_ics,
-)
+from services.mail_sender import send_forward_email  # 你现在用的是转发模板逻辑
+from services.llm_extractor import build_forward_package
+from services.calendar_generator import detect_event_and_build_ics
 
-load_dotenv(".env")
+load_dotenv(".env")  # 本地用；Render 上用 Environment Variables
 
 app = FastAPI()
 
@@ -18,6 +14,11 @@ app = FastAPI()
 @app.get("/")
 async def root():
     return {"message": "Email assistant is running!"}
+
+
+@app.get("/health")
+async def health():
+    return {"ok": True}
 
 
 @app.post("/email/webhook")
@@ -29,40 +30,26 @@ async def handle_incoming_email(request: Request):
     body = form_data.get("body-plain") or ""
 
     print("\n📩 New email received")
-    print("From:", sender)
-    print("Subject:", subject)
-    print("Body preview:", body[:200], "...")
+    print(f"From: {sender}")
+    print(f"Subject: {subject}")
+    print(f"Body preview: {body[:200]}...")
 
+    # 1) 生成转发模板内容（LLM 或 fallback）
     forward_pkg = build_forward_package(subject, body)
 
-    # Build ICS:
-    # 1) try LLM structured calendar_event
-    ics_content = None
-    if forward_pkg.get("has_calendar_event"):
-        ics_content = build_ics_from_calendar_event(forward_pkg.get("calendar_event") or {})
+    # 2) 检测是否有日历事件（生成 .ics 内容 or None）
+    ics_content = detect_event_and_build_ics(subject, body)
 
-    # 2) fallback heuristic detection from raw text
-    if not ics_content:
-        ics_content = detect_event_and_build_ics(subject, body)
-        forward_pkg["has_calendar_event"] = bool(ics_content)
-
-    ics_path = None
-    if ics_content:
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".ics", mode="w", encoding="utf-8")
-        tmp.write(ics_content)
-        tmp.close()
-        ics_path = tmp.name
-        print("📅 ICS generated at:", ics_path)
-
-    send_summary_email(
+    # 3) 发送转发模板（带可选 .ics）
+    send_forward_email(
         to_email=sender,
-        subject=subject,
-        summary_data=forward_pkg,
-        ics_path=ics_path,
+        forward_subject=forward_pkg["forward_subject"],
+        forward_text=forward_pkg["forward_text"],
+        ics_content=ics_content,
     )
 
     return {
         "status": "ok",
-        "forward_subject": forward_pkg.get("forward_subject"),
-        "has_calendar_event": forward_pkg.get("has_calendar_event"),
+        "forward_subject": forward_pkg["forward_subject"],
+        "has_calendar_event": bool(ics_content),
     }
