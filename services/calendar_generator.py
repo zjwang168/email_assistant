@@ -1,81 +1,156 @@
-# services/calendar_generator.py
+# email_assistant/services/calendar_generator.py
 import re
 from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List, Tuple
 
 import dateparser
+from dateparser.search import search_dates
 
 
-def extract_event_info(subject: str, body: str):
-    """
-    从邮件正文里尽量提取一个事件：
-    - start_datetime: 用 dateparser 从整段文本里找第一个日期+时间
-    - end_datetime: 默认 +1 小时
-    - location: 简单从 'in Room 210' 或 'at XXX' 这种结构里抓
-    """
-    text = (body or "").strip()
+def _guess_duration(subject: str, body: str) -> timedelta:
+    s = (subject or "").lower()
+    t = (body or "").lower()
+    is_meeting = any(k in s for k in ["meet", "meeting", "sync", "call"]) or any(
+        k in t for k in ["zoom", "google meet", "meet", "call"]
+    )
+    return timedelta(minutes=30) if is_meeting else timedelta(hours=2)
 
-    # 1) 用 dateparser 找时间（偏向未来）
-    dt = dateparser.parse(
+
+def _extract_location(text: str) -> str:
+    if not text:
+        return ""
+    m = re.search(r"\b(?:at|in)\s+([A-Za-z0-9 ,#\-\(\)]+)", text)
+    if not m:
+        return ""
+    return m.group(1).strip().rstrip(" .;,")
+
+
+def _find_first_datetime(text: str) -> Optional[datetime]:
+    if not text or not text.strip():
+        return None
+
+    settings = {
+        "PREFER_DATES_FROM": "future",
+        "RETURN_AS_TIMEZONE_AWARE": False,
+        "RELATIVE_BASE": datetime.now(),
+    }
+
+    results: Optional[List[Tuple[str, datetime]]] = search_dates(
         text,
-        settings={
-            "PREFER_DATES_FROM": "future",
-            "RETURN_AS_TIMEZONE_AWARE": False,
-        },
+        settings=settings,
+        add_detected_language=False,
     )
 
+    if not results:
+        settings2 = dict(settings)
+        settings2["PREFER_DATES_FROM"] = "current_period"
+        results = search_dates(
+            text,
+            settings=settings2,
+            add_detected_language=False,
+        )
+
+    if not results:
+        return None
+
+    _, dt = results[0]
+    return dt
+
+
+def detect_event(subject: str, body: str) -> Optional[Dict[str, Any]]:
+    """
+    Detect a concrete date+time in the email body.
+    """
+    text = (body or "").strip()
+    dt = _find_first_datetime(text)
     if not dt:
-        return None  # 没找到时间就认为没事件
+        return None
 
-    start = dt
-    end = dt + timedelta(hours=1)
-
-    # 2) 尝试找地点：in Room 210 / at Room 210 / at the library 等
-    location = ""
-    loc_match = re.search(r"\b(in|at)\s+([A-Za-z0-9 ,#\-]+)", text)
-    if loc_match:
-        location = loc_match.group(2).strip().rstrip(".")
+    duration = _guess_duration(subject, body)
+    end = dt + duration
+    location = _extract_location(text)
 
     return {
-        "start": start,
+        "title": subject or "Event",
+        "start": dt,
         "end": end,
         "location": location,
-        "subject": subject or "Event",
+        "description": "",
     }
 
 
-def generate_ics_content(subject: str, event_info: dict) -> str:
-    """
-    根据事件信息生成 .ics 内容（字符串），由 mail_sender 作为附件发送
-    """
-    uid = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+def _dt_to_ics(dt: datetime) -> str:
+    # MVP: emit as Zulu format without strict TZ conversion
+    return dt.strftime("%Y%m%dT%H%M%SZ")
+
+
+def build_ics_from_event(event: Dict[str, Any]) -> str:
+    uid = datetime.utcnow().strftime("%Y%m%dT%H%M%S") + "@zijin-assistant"
     now_utc = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
 
-    fmt = "%Y%m%dT%H%M%SZ"
-    dtstart = event_info["start"].strftime(fmt)
-    dtend = event_info["end"].strftime(fmt)
+    dtstart = _dt_to_ics(event["start"])
+    dtend = _dt_to_ics(event["end"])
 
-    ics_content = f"""BEGIN:VCALENDAR
+    summary = (event.get("title") or "Event").replace("\n", " ").strip()
+    location = (event.get("location") or "").replace("\n", " ").strip()
+    description = (event.get("description") or "").replace("\n", " ").strip()
+
+    return f"""BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//Zijin Assistant//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
 BEGIN:VEVENT
 UID:{uid}
 DTSTAMP:{now_utc}
 DTSTART:{dtstart}
 DTEND:{dtend}
-SUMMARY:{subject}
-LOCATION:{event_info.get('location', '')}
+SUMMARY:{summary}
+LOCATION:{location}
+DESCRIPTION:{description}
 END:VEVENT
 END:VCALENDAR
 """
-    return ics_content
 
 
-def detect_event_and_build_ics(subject: str, body: str) -> str | None:
+def detect_event_and_build_ics(subject: str, body: str) -> Optional[str]:
     """
-    综合入口：从正文里检测事件，若有则生成 .ics 字符串并返回；否则返回 None。
+    Convenience wrapper used by main.py (fallback mode).
     """
-    event_info = extract_event_info(subject, body)
-    if not event_info:
+    event = detect_event(subject, body)
+    if not event:
+        return None
+    return build_ics_from_event(event)
+
+
+def build_ics_from_calendar_event(calendar_event: Dict[str, Any]) -> Optional[str]:
+    """
+    Build ICS from LLM structured calendar_event if present.
+    Expected keys: title, start_datetime, end_datetime, location, description
+    """
+    if not isinstance(calendar_event, dict):
         return None
 
-    return generate_ics_content(subject, event_info)
+    title = (calendar_event.get("title") or "").strip() or "Event"
+    start_s = (calendar_event.get("start_datetime") or "").strip()
+    end_s = (calendar_event.get("end_datetime") or "").strip()
+    location = (calendar_event.get("location") or "").strip()
+    description = (calendar_event.get("description") or "").strip()
+
+    if not start_s:
+        return None
+
+    start_dt = dateparser.parse(start_s)
+    if not start_dt:
+        return None
+
+    end_dt = dateparser.parse(end_s) if end_s else (start_dt + timedelta(minutes=30))
+
+    event = {
+        "title": title,
+        "start": start_dt,
+        "end": end_dt,
+        "location": location,
+        "description": description,
+    }
+    return build_ics_from_event(event)
