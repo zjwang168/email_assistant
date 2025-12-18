@@ -1,123 +1,51 @@
+# email_assistant/services/mail_sender.py
 import os
 import requests
 from dotenv import load_dotenv
-from typing import Optional, Dict, Any, List
 
+# Load .env for local dev; Render uses its Environment settings
 load_dotenv(".env")
+load_dotenv("../.env")
 
 MAILGUN_API_KEY = os.getenv("MAILGUN_API_KEY")
 MAILGUN_DOMAIN = os.getenv("MAILGUN_DOMAIN")
 
 
-def _build_forward_text(forward_pkg: Dict[str, Any]) -> str:
-    """
-    Render a human-friendly forward template (NOT a robot summary).
-    forward_pkg expected keys:
-      - forward_subject: str
-      - tone: "short" | "warm" | "formal"
-      - key_points: list[str]
-      - links: list[{label,url}]
-      - has_calendar_event: bool (optional)
-    """
-    tone = (forward_pkg.get("tone") or "short").strip().lower()
-    key_points: List[str] = forward_pkg.get("key_points") or []
-    links: List[Dict[str, str]] = forward_pkg.get("links") or []
-
-    bullets = "\n".join([f"- {str(p).strip()}" for p in key_points if str(p).strip()])
-    if not bullets:
-        bullets = "- (No key points extracted.)"
-
-    primary_link = ""
-    if links and isinstance(links, list) and isinstance(links[0], dict):
-        primary_link = (links[0].get("url") or "").strip()
-
-    # Mention calendar attachment (if present) in a natural way.
-    has_cal = bool(forward_pkg.get("has_calendar_event", False))
-    calendar_line = "I’ve attached a calendar invite (.ics) in case you want to add it quickly." if has_cal else ""
-
-    if tone == "warm":
-        parts = [
-            "Hi everyone,",
-            "",
-            "I’m forwarding this in case it’s helpful. Here are the main points:",
-            "",
-            bullets,
-        ]
-        if primary_link:
-            parts += ["", f"Official details: {primary_link}"]
-        if calendar_line:
-            parts += ["", calendar_line]
-        parts += ["", "Looking forward to it 🙂", "Zijin"]
-        return "\n".join([p for p in parts if p is not None]).strip()
-
-    if tone == "formal":
-        parts = [
-            "Dear all,",
-            "",
-            "Please see the key details below:",
-            "",
-            bullets,
-        ]
-        if primary_link:
-            parts += ["", f"Full details: {primary_link}"]
-        if calendar_line:
-            parts += ["", calendar_line]
-        parts += ["", "Best regards,", "Zijin"]
-        return "\n".join([p for p in parts if p is not None]).strip()
-
-    # default short
-    parts = [
-        "Hi,",
-        "",
-        "Sharing the key details from the email:",
-        "",
-        bullets,
-    ]
-    if primary_link:
-        parts += ["", f"Full details: {primary_link}"]
-    if calendar_line:
-        parts += ["", calendar_line]
-    parts += ["", "Zijin"]
-    return "\n".join([p for p in parts if p is not None]).strip()
+def _mailgun_ready() -> bool:
+    return bool(MAILGUN_API_KEY and MAILGUN_DOMAIN)
 
 
-def send_summary_email(
+def send_forward_email(
     to_email: str,
-    subject: str,
-    summary_data: Dict[str, Any],
-    ics_path: Optional[str] = None,
+    forward_subject: str,
+    forward_text: str,
+    ics_content: str | None = None,
 ) -> None:
     """
-    Send a forward-template email back to the user via Mailgun.
-    (Kept function name for compatibility with your main.py, but summary_data
-    is now treated as forward_pkg.)
+    Send the FORWARD TEMPLATE email back to the user (your inbox).
+    Optional: attach an .ics calendar invite if ics_content is provided.
 
-    If ics_path is provided, attach it as event.ics.
+    This function is the one main.py imports.
     """
-    if not MAILGUN_API_KEY or not MAILGUN_DOMAIN:
+    if not _mailgun_ready():
         print("❌ Mailgun credentials missing")
         return
 
-    forward_subject = (summary_data.get("forward_subject") or "").strip()
-    mail_subject = forward_subject or (f"Fwd: {subject}" if subject else "Fwd: Email details")
-
-    body_text = _build_forward_text(summary_data)
+    if not to_email:
+        print("❌ Missing recipient email (sender)")
+        return
 
     data = {
         "from": f"Zijin Assistant <assistant@{MAILGUN_DOMAIN}>",
         "to": [to_email],
-        "subject": mail_subject,
-        "text": body_text,
+        "subject": forward_subject or "Key Info",
+        "text": forward_text or "",
     }
 
     files = None
-    if ics_path:
-        try:
-            with open(ics_path, "rb") as f:
-                files = [("attachment", ("event.ics", f.read(), "text/calendar"))]
-        except FileNotFoundError:
-            print(f"⚠️ ICS file not found at {ics_path}, sending without attachment.")
-            files = None
+    if ics_content:
+        # Mailgun supports sending attachment bytes directly
+        files = [("attachment", ("event.ics", ics_content.encode("utf-8"), "text/calendar"))]
 
     print(f"📤 Sending forward template to {to_email} via Mailgun...")
     resp = requests.post(
@@ -125,5 +53,63 @@ def send_summary_email(
         auth=("api", MAILGUN_API_KEY),
         data=data,
         files=files,
+        timeout=30,
     )
-    print("Mailgun response:", resp.status_code, resp.text[:200])
+    print("Mailgun response:", resp.status_code, resp.text[:300])
+
+
+# -----------------------------
+# Backward-compatible function
+# -----------------------------
+def send_summary_email(
+    to_email: str,
+    subject: str,
+    summary_data: dict,
+    ics_content: str | None = None,
+) -> None:
+    """
+    Backward compatibility: if older code calls send_summary_email.
+    It will format summary_data into a text email, then send using Mailgun.
+    Optional: attach an .ics calendar invite (ics_content).
+    """
+    lines: list[str] = []
+    lines.append("💡 Here's what I found in your email:\n")
+
+    summary = (summary_data.get("summary") or "").strip()
+    if summary:
+        lines.append("📋 Summary")
+        lines.append(f"- {summary}\n")
+
+    key_details = (summary_data.get("key_details") or "").strip()
+    if key_details:
+        lines.append("🕒 Key details")
+        lines.append(f"- {key_details}\n")
+
+    action_items = (summary_data.get("action_items") or "").strip()
+    primary_link = summary_data.get("primary_link")
+    if action_items or primary_link:
+        lines.append("✅ Action")
+        if action_items:
+            lines.append(f"- {action_items}")
+        if primary_link:
+            lines.append(f"- Quick link: {primary_link}")
+        lines.append("")
+
+    calendar_note = (summary_data.get("calendar_note") or "").strip()
+    if calendar_note:
+        lines.append("📅 Calendar")
+        lines.append(f"- {calendar_note}\n")
+
+    lines.append("—")
+    lines.append("🧭 Zijin Assistant")
+    lines.append("Your AI-powered inbox helper")
+
+    forward_text = "\n".join(lines)
+    forward_subject = f"Summary: {subject}" if subject else "Email summary"
+
+    send_forward_email(
+        to_email=to_email,
+        forward_subject=forward_subject,
+        forward_text=forward_text,
+        ics_content=ics_content,
+    )
