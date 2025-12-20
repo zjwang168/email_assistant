@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 
 from services.llm_extractor import build_forward_package
-from services.calendar_generator import detect_event_and_build_ics
+from services.calendar_generator import detect_event_and_build_ics, build_ics_from_calendar_event
 from services.mail_sender import send_forward_email
 
 
@@ -43,10 +43,37 @@ async def handle_incoming_email(request: Request):
     # 1) Build forward template package (subject + formatted text)
     forward_pkg = build_forward_package(subject, body)
     forward_subject = forward_pkg.get("forward_subject") or f"{subject} – Key Info"
-    forward_text = forward_pkg.get("forward_text") or "(No summary generated.)"
+
+    # Construct forward_text from key_points and links
+    key_points = forward_pkg.get("key_points") or []
+    links = forward_pkg.get("links") or []
+
+    summary_lines = []
+    if key_points:
+        summary_lines.append("Key Points:")
+        for kp in key_points:
+            summary_lines.append(f"- {kp}")
+    else:
+        summary_lines.append("(No key points generated.)")
+
+    if links:
+        summary_lines.append("\nLinks:")
+        for link in links:
+            label = link.get("label", "Link")
+            url = link.get("url", "")
+            summary_lines.append(f"- {label}: {url}")
+
+    forward_text = "\n".join(summary_lines)
 
     # 2) Detect calendar event and generate ICS content (string or None)
-    ics_content = detect_event_and_build_ics(subject, body)
+    # Priority: LLM detection > Heuristic detection
+    ics_content = None
+    if forward_pkg.get("has_calendar_event") and forward_pkg.get("calendar_event"):
+        ics_content = build_ics_from_calendar_event(forward_pkg["calendar_event"])
+
+    if not ics_content:
+        # Fallback to heuristic
+        ics_content = detect_event_and_build_ics(subject, body)
 
     # 3) Send forward template email (with optional .ics attachment)
     send_forward_email(
