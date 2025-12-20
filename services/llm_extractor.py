@@ -279,15 +279,15 @@ Rules:
 """
 
         resp = client.responses.create(
-            model="gpt-5-mini",
-            input=[
+            model="gpt-4o-mini",
+            messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": f"Subject: {subject}\n\nEmail:\n{cleaned_body}"},
             ],
             response_format={"type": "json_object"},
         )
 
-        content_block = resp.output[0].content[0].text
+        content_block = resp.choices[0].message.content
         raw_text = getattr(content_block, "value", content_block)
         data = json.loads(raw_text)
 
