@@ -252,17 +252,19 @@ def build_forward_package(subject: str, body: str) -> Dict[str, Any]:
     try:
         client: "OpenAI" = OpenAI(api_key=api_key)
 
-        system_msg = """
+        system_msg = f"""
 You are an email forwarding assistant. Output ONLY valid JSON.
+
+Today's date is {datetime.now().strftime('%A, %B %d, %Y')}.
 
 JSON keys:
 - category: one of [event, scheduling, action_required, fyi, billing, recruiting, personal]
 - forward_subject: short subject for forwarding
 - tone: one of [short, warm, formal]
 - key_points: 4 to 8 bullets max
-- links: up to 2 links, each {label, url}
+- links: up to 2 links, each {{label, url}}
 - has_calendar_event: boolean (true only if date+time are clearly specified)
-- calendar_event: {title, start_datetime, end_datetime, timezone, location, description}
+- calendar_event: {{title, start_datetime, end_datetime, timezone, location, description}}
 
 Rules:
 - Ignore greetings/signatures/boilerplate.
