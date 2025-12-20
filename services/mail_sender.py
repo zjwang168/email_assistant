@@ -20,10 +20,13 @@ def send_forward_email(
     forward_subject: str,
     forward_text: str,
     ics_content: str | None = None,
+    attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> None:
     """
     Send the FORWARD TEMPLATE email back to the user (your inbox).
     Optional: attach an .ics calendar invite if ics_content is provided.
+    Optional: attach other files (e.g. images) via attachments list.
+              Format: [(filename, content_bytes, content_type), ...]
 
     This function is the one main.py imports.
     """
@@ -42,10 +45,17 @@ def send_forward_email(
         "text": forward_text or "",
     }
 
-    files = None
+    files = []
     if ics_content:
         # Mailgun supports sending attachment bytes directly
-        files = [("attachment", ("event.ics", ics_content.encode("utf-8"), "text/calendar"))]
+        files.append(("attachment", ("event.ics", ics_content.encode("utf-8"), "text/calendar")))
+    
+    if attachments:
+        for filename, content, ctype in attachments:
+            files.append(("attachment", (filename, content, ctype)))
+    
+    if not files:
+        files = None
 
     print(f"📤 Sending forward template to {to_email} via Mailgun...")
     resp = requests.post(

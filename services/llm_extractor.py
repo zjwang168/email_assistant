@@ -21,6 +21,9 @@ def _clean_email_body(body: str) -> str:
     if not body:
         return ""
 
+    # Remove image placeholders like [image: ...] 
+    body = re.sub(r"\[image:[^\]]*\]", "", body)
+    
     lines = body.splitlines()
     cleaned_lines: List[str] = []
     skipping_forward_header = False
@@ -268,6 +271,9 @@ JSON keys:
 
 Rules:
 - Ignore greetings/signatures/boilerplate.
+- Key points should be concise and actionable (e.g., date, time, location, tickets, parking, security).
+- DO NOT repeat the event title or date as the first bullet point if it's already in the calendar event.
+- Remove image placeholders like [image: ...] or similar artifacts.
 - If time is vague (e.g. next week, TBD), has_calendar_event must be false.
 - If end time missing: meeting=30min, event=2h
 """
